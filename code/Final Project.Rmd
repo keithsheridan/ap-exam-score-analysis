@@ -1,0 +1,512 @@
+---
+title: "Final Project"
+author: "Keith Sheridan"
+date: "Due: May 12, 2023"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(knitr)
+library(leaps)
+library(caret)
+library(olsrr)
+library(glmnet)
+library(MASS)
+library(GGally)
+library(brant)
+library(generalhoslem)
+library(VGAM)
+library(car)
+library(ggpubr)
+library(nnet)
+library(lmtest)
+```
+
+```{r, echo=FALSE, include=FALSE}
+#create data frame for MLR model
+ap_data <- read.csv("project_data.csv")
+ap_data$class_of <- as.factor(ap_data$class_of)
+ap_data$sex <- as.factor(ap_data$sex)
+ap_data %>% dplyr::select(last_first, sex, class_of, grade, gpa, out_of_gpa, relative_gpa, 
+                   rank, out_of_rank, relative_rank, psat, ap_score) %>% 
+  drop_na(psat) -> cln_ap_data_mlr
+
+#create data frame for OLR model
+ap_data <- read.csv("project_data.csv")
+ap_data$class_of <- as.factor(ap_data$class_of)
+ap_data$sex <- as.factor(ap_data$sex)
+ap_data$ap_score <- as.factor(ap_data$ap_score)
+ap_data %>% dplyr::select(last_first, sex, class_of, grade, gpa, out_of_gpa, relative_gpa, 
+                   rank, out_of_rank, relative_rank, psat, ap_score) %>% 
+  drop_na(psat) -> cln_ap_data
+#summary of data revealed 5 NAs (missing PSAT scores for transfer students)
+
+#checking the structure and summary of the data
+cln_ap_data_mlr %>% 
+  dplyr::select(-last_first) %>% 
+  str()
+summary(cln_ap_data_mlr)
+```
+# Introduction
+
+The Advanced Placement (AP) Calculus AB exam (herein, the AP exam) is a comprehensive test administered by the College Board to all students enrolled in AP Calculus AB who opt to complete the examination. The scores range from 1-5 on a discrete scale (see Table 1 below). The purpose of the exam is to measure the mastery of the procedural and conceptual learning objectives of the course. In addition to student achievement, these scores are one measure of teaching efficacy for AP teachers.
+
+The purpose of this analysis is to explore the relationship between obtaining a specified score on the AP Calculus AB exam and certain predictors (to be discussed). Specifically, I will attempt to build a model for predicting AP scores based on the aforementioned predictors. As a result, I will also be able to assess my secondary goal of checking the compatibility between a grade earned in the course with the score earned on the AP exam. For example, if a student receives a 95 in the course, they should receive a 5 on the exam. By examining this relationship, I will be able to determine, in part, the efficacy of my teaching.
+
+```{r, echo=FALSE}
+ap_score_table <- data.frame(score = c(5, 4, 3, 2, 1),
+           rec = c("Extremely Well Qualified", "Very Well Qualified", "Qualified", 
+                   "Possibly Qualified", "No Recommendation"),
+           equiv = c("A+ or A", "A-, B+, or B", "B-, C+, or C", "---", "---"))
+kable(ap_score_table, col.names = c("AP Exam Score", "Recommendation", "College Course Grade Equivalent"), 
+      align = c("c", "l", "l"), caption = "AP Score Scale Table")
+```
+
+# Statistical Summaries
+
+For this analysis, the response variable will be the score obtained on the AP exam and the predictors of interest will be: final course grade, PSAT scores, gender, relative GPA, and relative rank. The following will provide statistical summaries and graphics of all relevant variables. Note: 5 observations were dropped due to missing PSAT scores. The values are missing for the students who transferred to our school for their senior year. Thus, I did not have access to their PSAT scores (which occur during junior year).
+
+\newpage
+## AP Calculus AB Exam Scores (Response Variable)
+
+The plot below displays a histogram of the AP exam scores. The data is centered at approximately 5 and skewed slightly left with no visible outliers.
+
+```{r, echo=FALSE}
+ggplot(cln_ap_data_mlr) +
+  geom_histogram(aes(ap_score), binwidth = 1) +
+  labs(x = "AP Score", y = "Frequency", title = "AP Calculus AB Exam Scores", subtitle = "Graduating Years: 2019-2022") +
+  theme_bw()
+```
+
+\newpage
+## Final Course Grade (Predictor Variable)
+
+The plot below displays a histogram of the final course grades. The data is centered at approximately 93 and skewed slightly left with no visible outliers.
+
+```{r, echo=FALSE}
+ggplot(cln_ap_data) +
+  geom_histogram(aes(grade), binwidth = 5) +
+  labs(x = "Course Grade", y = "Frequency", title = "Final Course Grade", subtitle = "Graduating Years: 2019-2022") +
+  theme_bw()
+```
+
+\newpage
+
+## PSAT Scores (Predictor Variable)
+
+The plot below displays a histogram of the PSAT scores. The data is centered at approximately 650 and skewed slightly right with no visible outliers. The reason for the unique shape in the upper half of the data comes from the scaled scores of the PSAT, which vary from test to test. The raw score of the math section of the PSAT ranges from 0 - 48, with the scaled scores ranging from 160 - 760. Each 1 unit decrease in raw score can correspond to a 0, 10, or 20 point decrease in scaled score.
+
+For example, for the exam administered on October 13, 2021, for raw scores 43 - 48, each unit decrease resulted in a 10 point reduction in scaled score (i.e. 710 - 760). However, for raw scores 40 - 42, each unit decrease resulted in a 20 point reduction in scaled score (i.e. 650 - 690). As a result, the scores of 660 and 680 were impossible to achieve. This phenomena typically occurs at the lower and higher end of the conversion scale and varies from test to test.
+
+```{r, echo=FALSE}
+ggplot(cln_ap_data) +
+  geom_histogram(aes(psat), binwidth = 25) +
+  labs(x = "PSAT Score", y = "Frequency", title = "PSAT Scores", subtitle = "Graduating Years: 2019-2022") +
+  theme_bw()
+```
+
+\newpage
+## Gender (Predictor Variable)
+
+The plot below displays a bar chart of gender. We can see there is a good balance between genders in the AP course.
+
+```{r, echo=FALSE}
+ggplot(cln_ap_data) +
+  geom_bar(aes(sex)) +
+  labs(x = "Gender", y = "Frequency", title = "Gender Breakdown", subtitle = "Graduating Years: 2019-2022") +
+  theme_bw()
+```
+
+\newpage
+## Relative GPA (Predictor Variable)
+
+The plot below displays a histogram of relative GPA. The data is centered at approximately 0.9 and skewed slightly left with no visible outliers. I computed a "relative GPA" because the GPA scale changed after the 2018-2019 school year. Since all maximum GPAs were not the same, I decided the "relative" metric would be appropriate. Discussion regarding this change will occur later in the analysis.
+
+```{r, echo=FALSE}
+ggplot(cln_ap_data) +
+  geom_histogram(aes(relative_gpa), binwidth = 0.05) +
+  labs(x = "Relative GPA", y = "Frequency", title = "Relative GPA", subtitle = "Graduating Years: 2019-2022") +
+  theme_bw()
+```
+
+\newpage
+## Relative Rank (Predictor Variable)
+
+The plot below displays a histogram of relative rank. The data is centered at approximately 0.06 and skewed significantly right with potential for outliers. I computed a "relative rank" because student rank is subject to class size. On average, a rank of 1 out of 300 is more significant than 1 out of 10. Since the class sizes vary from year to year, I decided the relative metric would be appropriate.
+
+```{r, echo=FALSE}
+ggplot(cln_ap_data) +
+  geom_histogram(aes(relative_rank), binwidth = 0.05) +
+  labs(x = "Relative Rank", y = "Frequency", title = "Relative Rank", subtitle = "Graduating Years: 2019-2022") +
+  theme_bw()
+```
+
+# Initial Analysis -- Multiple Linear Regression
+
+I began my analysis by fitting a multiple linear regression model with all five predictors:
+
+$y = \beta_0 + \beta_1x_1 + \beta_2x_2 + \beta_3I(male) + \beta_4x_4 + \beta_5x_5 + \epsilon$ where $\epsilon \overset{iid}{\sim} N(0,\sigma^2)$ and
+
+$y=$ AP exam score, $x_1=$ course grade, $x_2=$ PSAT score, $x_3=$ 1 (if male, 0 otherwise), $x_4=$ relative GPA, $x_5=$ relative rank.
+
+```{r, echo=FALSE, include=FALSE}
+mlr_ap_model <- lm(ap_score ~ grade + psat + sex + relative_gpa + relative_rank, data = cln_ap_data_mlr)
+summary(mlr_ap_model)
+```
+
+The estimate results are displayed in the Table 2 below.
+
+```{r, echo=FALSE}
+kable(coef(summary(mlr_ap_model)), caption = "Estimates for MLR Full Model")
+```
+
+
+Thus, our estimated full model is $\hat{y} = -14.434 + 0.101x_1 + 0.004x_2 + 0.433I(male) + 7.235x_4 + 1.438x_5$
+
+Additionally, we see from the associated p-values for each estimate that relative rank is not statistically significant (at the 0.05 level) conditional on the other predictors in the model. However, it's worth noting relative rank was marginally significant with a negative slope coefficient (analysis not shown). Additionally, the slope estimate for the relative rank predictor is positive, which is illogical. An increase in relative rank (which indicates a decrease in academic achievement) would be associated with an increase in the student's AP score. As a result, we may not want to include relative rank as a predictor. The relative rank predictor will be discussed further in subsequent sections.
+
+## Model Selection
+
+To select the optimal model, I conducted a best subset regression.
+
+```{r, echo=FALSE}
+ols_step_best_subset(mlr_ap_model)
+```
+
+Based on the best subset regression output (via most selection criteria), a model with four predictors, namely course grade, PSAT, gender, and relative GPA, should be used. It is worth noting that the adjusted R-squared value is slightly higher for the full model (with all five predictors) in addition to a lower MSEP. However, I chose to select the model with the four aforementioned parameters. 
+
+```{r, echo=FALSE, include=FALSE}
+mlr_ap_model_best <- lm(ap_score ~ grade + psat + sex + relative_gpa, data = cln_ap_data_mlr)
+summary(mlr_ap_model_best)
+```
+
+The estimate results are displayed in Table 3 below.
+
+```{r, echo=FALSE}
+kable(coef(summary(mlr_ap_model_best)), caption = "Estimate for MLR Optimal Model")
+```
+
+Thus, our estimated optimal model is $\hat{y} = -11.266 + 0.090x_1 + 0.004x_2 + 0.483I(male) + 4.764x_4$. We note that all p-values are significant at the 0.05 level and have decreased compared to the full model.
+
+### Variance Inflation Investigation 
+
+Due to the correlative nature of GPA and rank, I created a scatterplot of relative rank vs. relative GPA to assess the correlation between the variables.
+
+```{r, echo=FALSE}
+ggplot(cln_ap_data_mlr) +
+  geom_point(aes(relative_gpa, relative_rank, color = class_of, shape = class_of)) +
+  stat_cor(aes(relative_gpa, relative_rank), r.digits = 4) +
+  labs(x = "Relative GPA", y = "Relative Rank", title = "Scatterplot of Rank vs. GPA (Relative)", 
+       subtitle = "Grouped by Graduating Year") +
+  theme_bw()
+```
+
+
+```{r,echo=FALSE, include=FALSE}
+vif(mlr_ap_model)
+vif(mlr_ap_model_best)
+```
+
+
+The correlation between relative rank and relative GPA appears high. As a result, I calculated the variance inflation factors of the full and optimal models. We can see from Table 4 below the VIFs for the full model are higher than that of the reduced (optimal) model. Due to this fact coupled with the relative rank predictor producing nonsensical behavior, I believe the earlier decision to exclude relative rank as a predictor in the model is valid.
+
+
+```{r, echo=FALSE}
+#created data frames to add column title
+kable(list(data.frame(VIF = vif(mlr_ap_model)), data.frame(VIF = vif(mlr_ap_model_best))) , caption = "VIF (Full Model v. Optimal Model)", booktabs = TRUE, valign = "t")
+```
+
+\newpage
+
+## Influence Diagnostics
+
+### Potential Outliers
+
+```{r, echo=FALSE}
+#scaled residuals data frame -- filtered for |sd| > 2
+round(data.frame("Studentized Res" = rstandard(mlr_ap_model_best),
+                 "R-student" = rstudent(mlr_ap_model_best)),3) %>% 
+  filter(abs(Studentized.Res) > 2 | abs(R.student) > 2) %>% #piping into a kable for table purposes
+  kable(caption = "Standardized Residuals (Optimal Model)")
+```
+
+Table 5 above shows the observations whose standardized residual value is greater than a magnitude of 2. Given our data set has 71 observations, we would expect approximately 3 or 4 values to have standardized residual values greater than a magnitude of 2. Thus, none of these points should be considered a significant outlier. Influential points will be analyzed in the next section.
+
+### Influential Points
+
+```{r, echo=FALSE}
+#calculating influence measures -- cook's, DFFITS, DFBETAS, COVRATIO
+infl_cut_val <- data.frame(metric = c("Cook's", "DFFITS", "COVRATIO"),
+                           cut = c("0.056", "0.531", "< 0.789 or > 1.211"))
+round(data.frame(Cooks = cooks.distance(mlr_ap_model_best),
+                 DFFITS = dffits(mlr_ap_model_best),
+                 COVRATIO = covratio(mlr_ap_model_best)), 3) %>% 
+  filter(Cooks > 4/nobs(mlr_ap_model_best) | abs(DFFITS) > 2*sqrt(5/nobs(mlr_ap_model_best)) |
+           COVRATIO > 1+(3*5/nobs(mlr_ap_model_best)) | COVRATIO < 1-(3*5/nobs(mlr_ap_model_best))) -> infl_measure
+#dumped the data frame into a variable for knitr purposes
+
+```
+
+```{r, echo=FALSE}
+kable(infl_measure, caption = "Influence Measures")
+```
+
+Table 6 above shows the observations which violate the threshold value of at least one influence metric listed. There are 6 observations which violate two of the three metrics, while no observation violated all three metrics. The cutoff values for each metric can be seen in Table 7 below.
+
+\newpage
+
+```{r, echo=FALSE}
+kable(infl_cut_val, caption = "Influence Measure Cutoff Values", col.names = c("Metric", "Cutoff Value"))
+```
+
+While the given metrics have flagged these observations as influential, they are not severely atypical or worthy of removal from the data set. When looking at the observations in question, the students tend to fall in one of three categories:
+
+(1) Students who do not complete organizational and duty-oriented tasks (i.e. homework, submitting assignments on time, classwork, etc.). As a result, their GPA and course grade are negatively impacted. However, some of these students (at least as it pertains to AP Calculus) are naturally gifted at math and are able to achieve high AP scores as a result.
+
+(2) Exchange students whose primary language is not English. With these limitations, it's often more difficult for these students to communicate effectively, more so in reading- and writing-based courses such as English, Literature, and History.
+
+(3) Students who are challenging themselves with the AP class. If a student is interested in challenging themselves or needs the course for future study, we will often allow them to enroll even if the prerequisite requirements are not fully met.
+
+As these observations are representative of the future student population, I do not believe there is a valid reason to remove them.
+
+## Model Assumptions
+
+### Linearity and Equal Variance
+
+```{r, echo=FALSE}
+plot(mlr_ap_model_best, which = 1)
+```
+
+The residuals versus fitted plot appears problematic for the linearity and equal variance assumptions of multiple linear regression. The points do not appear to be centered at zero and it is difficult to evaluate if the variance is constant throughout.
+
+#### Breusch-Pagan Test
+
+I decided to perform the Breusch-Page Test to determine if heteroscedasticity is present. The hypotheses of the test are
+
+$H_0:$ Heteroscedasticity is not present vs. $H_a:$ Heteroscedasticity is present.
+
+```{r, echo=FALSE}
+bptest(mlr_ap_model_best)
+```
+
+Given $p = 0.169 > 0.05$, we fail to reject $H_0$ at the 0.05 level. We do not have enough evidence to show heteroscedasticity is present. While this result is positive, this test does not confirm or disprove a linear association.
+
+### Normality
+
+```{r, echo=FALSE}
+plot(mlr_ap_model_best, which = 2)
+```
+
+The Normal Q-Q plot above shows strong evidence of normality of the residuals.
+
+#### Shapiro-Wilk Test
+
+I decided to perform the Shapiro-Wilk Test to determine if the residual values are normally distributed. The hypotheses of the test are
+
+$H_0:$ Residuals are normal vs. $H_a:$ Residuals are non-normal.
+
+```{r, echo=FALSE}
+shapiro.test(mlr_ap_model_best$residuals)
+```
+
+Given $p = 0.3249 > 0.05$, we fail to reject $H_0$ at the 0.05 level. We do not have enough evidence to show the residuals are non-normal.
+
+### Independence
+
+```{r, echo=FALSE}
+plot(mlr_ap_model_best$residuals, xlab = "Order", ylab = "Residual Value")
+```
+
+A plot of the residuals vs. order is shown above. There does not appear to be any significant patterns, which is evidence of independence. I believe independence is a reasonable assumption for this data.
+
+## Final Thoughts - Multiple Linear Regression
+While there could be some value to this model, due to the discrete nature of my response variable, I decided to investigate ordinal logistic regression to achieve my goal of predicting AP scores. I believe this model may be better suited for my data structure.
+
+# Additional Analysis -- Ordinal Logistic Regression
+
+## Mathematical Formulation
+
+```{r, echo=FALSE, include=FALSE}
+olr_ap_model_full <- polr(ap_score ~ grade + psat + sex + relative_gpa + relative_rank, data = cln_ap_data, Hess = TRUE)
+summary(olr_ap_model_full)
+#store the coefficient table
+coeff_table_full <- coef(summary(olr_ap_model_full))
+#calculate and store p-values
+pval <- pnorm(abs(coeff_table_full[, "t value"]), lower.tail = FALSE)*2
+#combine coefficient table and p-values table
+coeff_table_full <- cbind(coeff_table_full, "p-value" = round(pval,4))
+coeff_table_full
+```
+
+The ordinal logistic regression model is given as $logit[P(Y \leq j)] = \zeta_j - \sum\beta_ix_i$ where $j \in \{1,2,3\}$ and $i \in \{1,2,3,4\}$. In this model $j=$ the level of an ordered category, $i=$ predictor variable, and $\zeta_j=$ intercept of category level $j$. Given none of the AP scores in the data have a value of 1, this results in three cutoff values: 2 to 3, 3 to 4, and 4 to 5. Thus, there are 3 associated intercepts.
+
+The OLR formulation gives the log odds of being in category $j$ or lower. After fitting, probabilities can be extracted for each category. First, we fit a full model with all predictor variables. The estimate results are displayed in Table 8 below.
+
+```{r, echo=FALSE}
+kable(coeff_table_full, caption = "Estimates for OLR Full Model")
+```
+
+Thus, our estimated full model is 
+
+$logit[P(Y \leq 2)] = 63.753 - (0.327x_1 + 0.019x_2 + 1.527I(male) + 26.951x_4 + 7.055x_5)$
+
+$logit[P(Y \leq 3)] = 65.345 - (0.327x_1 + 0.019x_2 + 1.527I(male) + 26.951x_4 + 7.055x_5)$
+
+$logit[P(Y \leq 4)] = 67.305 - (0.327x_1 + 0.019x_2 + 1.527I(male) + 26.951x_4 + 7.055x_5)$.
+
+Upon viewing the estimated results, we see all predictors are significant at the 0.05 level, including relative rank. However, the estimate for the slope coefficient is still positive, which produces illogical results. Thus, I decided to explore other models via best subset selection with AIC criterion.
+
+## Model Selection
+
+I conducted a brute-force best subset regression (analysis not shown). The two lowest AIC values were for a model with the four predictors: course grade, PSAT, gender, and relative GPA (AIC = 117.3327) and the full model (AIC = 117.0995). While the full model has a slightly lower AIC (difference of 0.2332), I decided to choose the model with four predictors because the slope coefficient of the relative rank variable was nonsensical.
+
+```{r, echo=FALSE, include=FALSE}
+#conducted best subset regression (brute force) with AIC criterion
+olr_ap_model_best <- polr(ap_score ~ grade + psat + sex + relative_gpa, data = cln_ap_data, Hess = TRUE)
+summary(olr_ap_model_best)
+#store the coefficient table
+coeff_table_best <- coef(summary(olr_ap_model_best))
+#calculate and store p-values
+pval <- pnorm(abs(coeff_table_best[, "t value"]), lower.tail = FALSE)*2
+#combine coefficient table and p-values table
+coeff_table_best <- cbind(coeff_table_best, "p-value" = round(pval,4))
+coeff_table_best
+```
+
+The estimate results for the optimal model are displayed in Table 9 below.
+
+```{r, echo=FALSE}
+kable(coeff_table_best, caption = "Estimates for OLR Optimal Model")
+```
+
+Thus, our estimated optimal model is 
+
+$logit[P(Y \leq 2)] = 46.566 - (0.259x_1 + 0.019x_2 + 1.786I(male) + 15.410x_4)$
+
+$logit[P(Y \leq 2)] = 48.089 - (0.259x_1 + 0.019x_2 + 1.786I(male) + 15.410x_4)$
+
+$logit[P(Y \leq 2)] = 49.969 - (0.259x_1 + 0.019x_2 + 1.786I(male) + 15.410x_4)$
+
+## Model Assumptions
+
+### No Multicollinearity
+
+Comparing, again, the VIFs of the full model vs. the optimal model (see Table 4 on page 10). I believe the model chosen during the selection period is appropriate as the VIFs are lower for all predictors in the model without relative rank. While the VIFs for the full model do not exceed 5, I believe having lower VIFs with the ordinal logistic regression is desirable.
+
+### Proportional Odds
+
+The proportional odds assumption says the coefficients that describe the odds of being in the lowest category vs. all higher categories of the response variable are the same as those that describe the odds between the second lowest category and all higher categories, etc. In other words, the slope coefficients must the same for each category. I ran the Brant test to determine if the proportional odds assumption is met. The hypotheses of the test are
+
+$H_0:$ Proportional odds holds vs. $H_a:$ Proportional odds is violated.
+
+```{r, echo=FALSE}
+#goodness of fit test - brant test
+brant(olr_ap_model_best)
+```
+
+From the code output above, we see the overall p-value of the test is 1. Thus, we fail to reject $H_0$ at the 0.05 level and conclude the proportional odds assumption is reasonable.
+
+## Prediction
+
+```{r, echo=FALSE, include=FALSE}
+#prediction
+new_data1 <- data.frame("grade" = 85,"psat" = 570,"sex" = "M", "relative_gpa" = 5.24/6)
+new_data2 <- data.frame("grade" = 87,"psat" = 580,"sex" = "F", "relative_gpa" = 5.35/6)
+new_data3 <- data.frame("grade" = 98,"psat" = 650,"sex" = "M", "relative_gpa" = 5.54/6)
+stud_id <- data.frame(student = c("Student 1", "Student 2", "Student 3"))
+stud_data <- rbind(new_data1, new_data2, new_data3)
+stud_comp <- cbind(stud_id, stud_data)
+Student1 <- predict(olr_ap_model_best, newdata = new_data1, type = "probs")
+Student2 <- predict(olr_ap_model_best, newdata = new_data2, type = "probs")
+Student3 <- predict(olr_ap_model_best, newdata = new_data3, type = "probs")
+preds <- rbind(Student1, Student2, Student3)
+preds
+```
+
+Unfortunately, I do not have current data to test the model due to 2023 AP scores being released in July. However, I was able to gather some data from a few volunteer students to test the model. For now, I am using my knowledge of the AP exam as well as the individual students to formulate a "teacher prediction". The student data is given in Table 10 below.
+
+```{r, echo=FALSE}
+kable(stud_comp, caption = "Student Data", col.names = c("Student", "Course Grade", "PSAT", "Gender", "Relative GPA"), align = "c")
+```
+
+For each student, the probability of obtaining a particular score is shown in Table 11.
+
+(1) Student #1 is most likely to score a 3.
+
+(2) Student #2 is most likely to score a 1 or 2.
+
+(3) Student #3 is most likely to score a 5.
+
+Given my experience with AP score outcomes and knowledge of the students, I would predict a 4, 3, and 5 for students 1, 2, and 3, respectively. I am very interested to compare the model predictions with the AP scores upon their release in July. The only model prediction to match my prediction is for student #3. However, P(score=4) is very close to P(score=3) for student #1 (similar circumstances for student #2), so I believe my prediction could still be correct.
+
+
+```{r, echo=FALSE}
+kable(preds, caption = "Predicted Outcome", col.names = c("P(score=1or2)", "P(score=3)","P(score=4)", "P(score=5)"))
+```
+
+# Cross Validation Model - Nascent Stage
+
+I wanted to use cross validation to test the predictive power of my model. However, I was only able to perform some basic analysis. Note: There will be some raw code output. I created a model using 10-fold cross validation using the same four predictors from my optimal MLR and OLR models. The model output is shown below
+
+```{r, echo=FALSE}
+set.seed(5)
+train_control <- trainControl(method = "cv", number = 10, savePredictions = TRUE)
+cv_ap_model <- train(ap_score ~ grade + psat + sex + relative_gpa, 
+                    data = cln_ap_data, trControl = train_control, method = "polr")
+cv_ap_model
+```
+
+When calling the train function, I passed it the value of "polr" for the "method =" parameter. Since the polr() function also has a "method =" parameter (which I believe can be passed the values "cauchit", "cloglog", "logistic" [default], "loglog", or "probit"), I believe the train() function is testing the accuracy of the model using all of the different "links" (I believe this is what they are called). The link with the highest accuracy is selected; specifically in this case, the "probit" link, with an accuracy of approximately 71%.
+
+We can also get a summary of the estimates (shown below).
+
+```{r, echo=FALSE}
+#store the coefficient table
+coeff_table_cv <- coef(summary(cv_ap_model))
+#calculate and store p-values
+pval <- pnorm(abs(coeff_table_cv[, "t value"]), lower.tail = FALSE)*2
+#combine coefficient table and p-values table
+coeff_table_cv <- cbind(coeff_table_cv, "p-value" = round(pval,4))
+coeff_table_cv
+```
+
+We can see all of the predictors are significant at the 0.05 level. Also, the AIC of the model is 116.3092 (not shown), which is lower than the optimal model from the MLR and OLR. However, since the probit method was used, I am unsure how to formulate the model. Furthermore, if another method is used (other than logistic), does the model formulation change?
+
+Lastly, I plotted the accuracy of test data for each of the ten folds (shown below).
+
+```{r, echo=FALSE}
+#resampling and plotting the accuracy for each fold
+cv_ap_model$resample %>% 
+  ggplot(aes(x=Resample, y=Accuracy, group=1)) + 
+  geom_boxplot() + 
+  geom_point() + 
+  theme_minimal()
+```
+
+We can see the accuracy ranges from 50% to 100%, with the median being approximately 71% (mentioned earlier). Given the validity of my formulation, I am hopeful this model will be able to help predict future AP scores of my students.
+
+# Final Thoughts & Future Considerations
+
+Overall, I feel I was able to create a solid foundation for building a working model. There is still much work and fine-tuning to accomplish, but overall I am pleased with the results. The true test will come when I compare the predictions of the model to the 2023 AP scores.
+
+For future analyses, I would like consider the following:
+
+(1) Create a new model for academic years in which the maximum GPA is 6.0. After viewing the scatterplot of relative rank vs. relative GPA, it was clear that higher relative GPAs were more common under the former GPA system (max of 4.3). Thus, I would like to see the prediction accuracy of a model with one GPA scale.
+
+(2) Additional relevant predictors. Some suggestions by classmates include: a categorical variable for race/ethnicity, a numerical variable for math GPA, or a variable which describes amount of effort on the exam (could be categorical or numerical). Perhaps a variable which captures the number of extracurricular activities or sport commitments would be appropriate to account for the amount of time they have to spend on academic pursuits.
+
+(3) Continue learning more about the cross validation models and how they are formulated.
+
+(4) Consider multiple imputations for missing PSAT values.
+
+
+
+
+
+
+
+
+
+
